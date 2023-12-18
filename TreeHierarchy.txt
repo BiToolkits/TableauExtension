@@ -1,0 +1,479 @@
+
+Public Function gsSQLtmpTreeHierarchy_SQL(ByVal pvsSourceTableName As String, ByVal pvsTargetTableName As String, ByVal pvbDependency As Boolean, ByVal pvbRecursion As Boolean) As String
+'----------------------------------------------------------------------------------------------------------
+'Get Tree Hierarchy level and sequence #
+'For both Recursive and non-recursive, must call gsSQLtmpTreeResult to determine parent object is widow or has children
+'For recursive search, the gsSQLtmpTreeResult also get the top level row only; note this SQL returns duplicate rows because of sequence #
+'
+'-- Input Temp Table
+'o  #tmpSource_userid
+'o  #tmpTreeList_userid
+'o  pvsDependencyTableName
+'
+'-- Output Temp table
+'
+'-----------------------------------------------------------------------------------------------------------
+Dim sSqlSelect As String
+Dim sSqlFrom As String
+Dim sSqlTree As String
+
+    If Not pvbRecursion Then
+        '-- Only travel one level
+        '-------------------------------------------
+        '-- Save tree to temp table #tmpTreeList_userid
+        '-- note: union with original source data
+        '-------------------------------------------
+ 
+        If pvbDependency Then
+            sSqlSelect = _
+                "Select a.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+    
+            sSqlFrom = "FROM " & _
+                        pvsSourceTableName & " a " & _
+                        "join " & gtypSession.sDBPrefixMD & "dssmdobjdepn b " & _
+                        " on a.project_id = b.project_id " & _
+                        " and a.object_id = b.depn_objid "     '-- Up Level -> Dependency List : depn_objid looking for Object_ID
+            sSqlFrom = sSqlFrom & _
+                        "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                        "    on b.project_id = d.project_id " & _
+                        " and b.object_id = d.object_id "     '-- Up Level -> Dependency List
+            sSqlFrom = sSqlFrom & " WHERE d.object_type " & gkMstrObjectResultExclusion 'gkMstrObjectDependencyExclusion
+            
+            '*mod* v2.1r11a Include shortcut used in Library from original source
+            sSqlFrom = sSqlFrom & " UNION Select Distinct b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+            sSqlFrom = sSqlFrom & _
+                " FROM " & _
+                pvsSourceTableName & " b " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                  "on b.project_id = d.project_id " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L1 " & _
+                  "on L1.object_id = d.object_id and L1.project_id = d.project_id " & _
+                 "and L1.object_type = 18 " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L2 " & _
+                  "on L1.LINKITEM_ID = L2.LINKITEM_ID and L1.project_id = L2.project_id " & _
+                 "and L2.object_type = 55 " & _
+                 "and L2.object_id = b.object_id and L2.project_id = b.project_id "
+            sSqlFrom = sSqlFrom & " WHERE d.object_type " & gkMstrObjectResultExclusion
+            
+            If gbIncludeSourceTableDependentSearch() Then
+                '*mod* v2.1r11d Table dependents search should include attributes that maps to source table which is not Lookup table (note: dssmdobjdepn only contains Attribute dependents for Lookup source table)
+                sSqlFrom = sSqlFrom & " UNION Select Distinct b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+                sSqlFrom = sSqlFrom & _
+                    " FROM " & _
+                    pvsSourceTableName & " b " & _
+                    "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                    "    on b.project_id = d.project_id " & _
+                    "    JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn c " & _
+                    "        on b.project_id = c.project_id " & _
+                    "        and b.object_id = c.object_id " & _
+                    "        and c.depn_objid = d.object_id "
+                sSqlFrom = sSqlFrom & " WHERE c.object_type in (15) and d.object_type in (12) "
+            End If
+        Else    '-- Components
+            sSqlSelect = _
+                "Select a.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+    
+            sSqlFrom = "FROM " & _
+                        pvsSourceTableName & " a " & _
+                        "join " & gtypSession.sDBPrefixMD & "dssmdobjdepn b " & _
+                        " on a.project_id = b.project_id " & _
+                        " and a.object_id = b.object_id "    '-- Down Level -> Component List : Object_ID looking for depn_objid
+            sSqlFrom = sSqlFrom & _
+                        "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                        "    on b.project_id = d.project_id " & _
+                        " and b.depn_objid = d.object_id "    '-- Down Level -> Component List
+            sSqlFrom = sSqlFrom & " WHERE d.object_type " & gsMstrObjectComponentResultExclusion
+            
+            '*mod* v2.1r11a Shortcut used in Library need to get components from Link table
+            sSqlFrom = sSqlFrom & " UNION Select Distinct b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+            sSqlFrom = sSqlFrom & _
+                " FROM " & _
+                pvsSourceTableName & " b " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                  "on b.project_id = d.project_id " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L1 " & _
+                  "on L1.object_id = b.object_id and L1.project_id = b.project_id " & _
+                 "and L1.object_type = 18 " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L2 " & _
+                  "on L1.LINKITEM_ID = L2.LINKITEM_ID and L1.project_id = L2.project_id " & _
+                 "and L2.object_type = 55 " & _
+                 "and L2.object_id = d.object_id and L2.project_id = d.project_id "
+            sSqlFrom = sSqlFrom & " WHERE d.object_type " & gsMstrObjectComponentResultExclusion
+        
+            If gnComponentDetail <> nComponentDetailMin And gbIncludeSourceTableComponentSearch() Then             '-- Skip if component detail is Min or not specified in option
+                '*mod* v2.1r11d component of attribute include all tables that mapped to attribute(previously only main table is included)
+                sSqlFrom = sSqlFrom & " UNION Select Distinct b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+                sSqlFrom = sSqlFrom & _
+                    " FROM " & _
+                    pvsSourceTableName & " b " & _
+                    "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                    "    on b.project_id = d.project_id " & _
+                    "    JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn c " & _
+                    "        on b.project_id = c.project_id " & _
+                    "        and b.object_id = c.depn_objid " & _
+                    "        and c.object_id = d.object_id "
+                sSqlFrom = sSqlFrom & " WHERE c.depnobj_type in (12) and d.object_type in (15)"
+            End If
+        End If
+        
+'*mod* v2.1e 3/6/16 cl: Must call gsSQLtmpTreeResult to determine TreeLevel = 0 or -1 (Has children or Widow)
+'        sSqlFrom = sSqlFrom & _
+'            " UNION " & _
+'            "Select b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, 'Y' Original_Data, 0 TreeLevel " & _
+'            "FROM " & _
+'                    pvsSourceTableName & " b " & _
+'            "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+'            "    ON b.object_id = d.object_id " & _
+'            "    and b.project_id = d.project_id "
+'
+            
+        gsSQLtmpTreeHierarchy_SQL = gsSqlTmpTableCreation(pvsTargetTableName, sSqlSelect, sSqlFrom)
+        Exit Function
+        '*** Short Circuit Exit ***
+    End If
+    
+    '-------------------------------------------
+    '-- Get Recursive Tree
+    '-------------------------------------------
+    sSqlTree = "WithR Tree_List( " & _
+        "            TreeLevel, original_id, object_id, depn_objid, object_type, subtype, extended_type, project_id "
+    
+    If gtypSQLTmpTable.nDBID = nSQLServer Or gtypSQLTmpTable.nDBID = nSybase Then
+        sSqlTree = sSqlTree & " ,Sentinel "
+    ElseIf gtypSQLTmpTable.nDBID = nOracle Then
+        '-- **notwork no need** sSqlTree = sSqlTree & " ,Sentinel " "
+    ElseIf gtypSQLTmpTable.nDBID = nMySql Or gtypSQLTmpTable.nDBID = nPostgreSQL Then
+        sSqlTree = sSqlTree & " ,Sentinel "
+    End If
+    
+    sSqlTree = sSqlTree & ") AS " & _
+        "( " & _
+        "    SELECT " & _
+        "        1 AS TreeLevel, c.object_id Original_id " & _
+        "        ,d.object_id "
+        '-- Starting Object ID
+    If pvbDependency Then
+        sSqlTree = sSqlTree & "        ,d.object_id "
+    Else
+        sSqlTree = sSqlTree & "        ,Coalesce(L2.object_id, a.depn_objid) "
+    End If
+        '-- Starting Object Type
+    sSqlTree = sSqlTree & _
+        "        ,d.object_type, d.subtype, d.extended_type " & _
+        "        ,c.project_id "
+        
+    '-- Recursive Loop Init
+    sSqlTree = sSqlTree & gsSqlRecursiveLoopInit("c.object_id")
+    
+    If pvbDependency Then   '-- start from the next level : depn_objid looking for Object_ID
+        If Not gbIncludeSourceTableDependentSearch() Then
+            sSqlTree = sSqlTree & " FROM " & _
+                "         " & gtypSession.sDBPrefixMD & "dssmdobjdepn a "
+        Else
+            '*mod* v2.1r11d Table dependents search should include attributes that maps to source table which is not Lookup table (note: dssmdobjdepn only contains Attribute dependents for Lookup source table)
+            sSqlTree = sSqlTree & " FROM " & _
+                "       (Select a.project_id, a.object_id, a.object_type, a.depn_objid, a.depnobj_type From " & gtypSession.sDBPrefixMD & "dssmdobjdepn a " & _
+                "         join " & pvsSourceTableName & " c " & _
+                "         ON a.depn_objid = c.object_id " & _
+                "         And a.project_id = c.project_id " & _
+                "       Union Select a.project_id, a.depn_objid object_id, a.depnobj_type object_type, a.object_id depn_objid, a.object_type depnobj_type From " & gtypSession.sDBPrefixMD & "dssmdobjdepn a " & _
+                "         join " & pvsSourceTableName & " c " & _
+                "         ON a.object_id = c.object_id " & _
+                "         And a.project_id = c.project_id " & _
+                "           WHERE a.object_type in (15) and a.depnobj_type in (12)) a "
+        End If
+
+        sSqlTree = sSqlTree & _
+            "         join " & pvsSourceTableName & " c " & _
+            "         ON a.depn_objid = c.object_id " & _
+            "         and a.project_id = c.project_id " & _
+            "         join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+            "         ON a.object_id = d.object_id " & _
+            "         and c.project_id = d.project_id " & _
+            "         where (a.object_type not in (12, 13, 15) or a.depnobj_type not in (12, 13)) "      '*mod* v2.1q ignore weak depdencies between attribute and fact (Fact entry level attributes)
+            '*mod* v2.1r11d exclude logical table
+            '"         where (a.object_type not in (12, 13) or a.depnobj_type not in (12, 13)) "      '*mod* v2.1q ignore weak depdencies between attribute and fact (Fact entry level attributes)
+            '-- ^^^ Anchor
+    Else
+        sSqlTree = sSqlTree & " FROM " & _
+                pvsSourceTableName & " c " & _
+                "left join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L1 " & _
+                  "ON L1.object_id = c.object_id and L1.project_id = c.project_id " & _
+                 "and L1.object_type = 18 " & _
+                "left join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L2 " & _
+                  "ON L1.LINKITEM_ID = L2.LINKITEM_ID and L1.project_id = L2.project_id " & _
+                 "and L2.object_type = 55 " & _
+                "left join " & gtypSession.sDBPrefixMD & "dssmdobjdepn a " & _
+                  "ON a.object_id = c.object_id " & _
+                 "and a.project_id = c.project_id " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                  "ON c.object_id = d.object_id and c.project_id = d.project_id " & _
+               "where (a.object_type Is Null or a.object_type not in (12, 13) or a.depnobj_type not in (12, 13)) "      '*mod* v2.1q ignore weak depdencies between attribute and fact (Fact entry level attributes)
+            '-- ^^^ Anchor
+            '*mod* v2.1r11a Shortcut used in Library need to get components from Link table
+            
+    End If
+        '-- recursion
+    sSqlTree = sSqlTree & _
+        " UNION ALL  SELECT " & _
+        "        p.TreeLevel + 1, p.Original_id " & _
+        "        ,a.object_id " & _
+        "        ,a.depn_objid " & _
+        "        ,c.object_type, c.subtype, c.extended_type " & _
+        "        ,a.project_id "
+    
+    '-- Recursive Loop tracking
+    sSqlTree = sSqlTree & gsSqlRecursiveLoopTracking("a.object_id")
+        
+    sSqlTree = sSqlTree & _
+        "    FROM " & _
+        "        Tree_List p " & _
+        "        JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn a " & _
+        "            ON p.project_id = a.project_id "
+    
+    sSqlTree = sSqlTree & _
+        "        JOIN    " & gtypSession.sDBPrefixMD & "dssmdobjinfo c " & _
+        "                ON a.object_id = c.object_id " & _
+        "                and a.project_id = c.project_id "
+        
+    If pvbDependency Then
+        
+        '*mod* v2.1r10c use for FFSQL tables checking
+        sSqlTree = sSqlTree & _
+            "        JOIN    " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+            "                ON a.depn_objid = d.object_id " & _
+            "                and a.project_id = d.project_id "
+                      
+    '        sSqlTree = sSqlTree & _
+    '            "        JOIN    " & gtypSession.sDBPrefixMD & "dssmdobjdepn a2 " & _
+    '            "                ON a.depn_objid = a2.object_id " & _
+    '            "                and a.project_id = a2.project_id "
+            sSqlTree = sSqlTree & _
+            "  and p.object_id = a.depn_objid " & _
+            "  and ((a.depnobj_type " & gkMstrObjectDependencyExclusion       '-- Up Level -> Dependency List
+            '*mod* v2.1r10c include FFSQL tables
+            sSqlTree = sSqlTree & ") or (d.object_type in (15,53) and d.subtype in (3840,13568) and d.extended_type in (3) "
+            'sSqlTree = sSqlTree & " and a2.depnobj_type = 10 "
+            sSqlTree = sSqlTree & ")) "
+    Else
+'        sSqlTree = sSqlTree & _
+'            "        JOIN    " & gtypSession.sDBPrefixMD & "dssmdobjdepn a2 " & _
+'            "                ON a.depn_objid = a2.object_id " & _
+'            "                and a.project_id = a2.project_id "
+        sSqlTree = sSqlTree & _
+            "  and p.depn_objid = a.object_id " & _
+            "  and ((c.object_type " & gsMstrObjectComponentExclusion & gkMstrObjectComponentExclusionMore
+                                    
+            '*mod* v2.1r10c
+            '"  and a.object_type " & gsMstrObjectComponentExclusion        '-- Down Level -> Component List
+            '*mod* v2.1r10c include FFSQL tables
+            sSqlTree = sSqlTree & ") or (c.object_type in (15,53) and c.subtype in (3840,13568) and c.extended_type in (3) "
+            'sSqlTree = sSqlTree & " and a2.depnobj_type = 10 "
+            sSqlTree = sSqlTree & ")) "
+    End If
+
+    If pvbDependency Then
+        '--*mod* v2.1o sSqlTree = sSqlTree & " WHERE c.object_type " & gkMstrObjectDependencyExclusion '--*mod* v2.1 cl 2/19/16 to make it work, we need to add to all dep exclusions '--& gkMstrObjectDependencyExclusionMore
+        sSqlTree = sSqlTree & " WHERE (a.object_type not in (12, 13) or a.depnobj_type not in (12, 13)) "      '*mod* v2.1q ignore weak depdencies between attribute and fact (Fact entry level attributes)
+    Else    '-- Components
+        sSqlTree = sSqlTree & " WHERE (a.object_type not in (12, 13) or a.depnobj_type not in (12, 13)) "      '*mod* v2.1q ignore weak depdencies between attribute and fact (Fact entry level attributes)
+    End If
+
+    '-- Recursive Loop tracking
+    sSqlTree = sSqlTree & gsSqlRecursiveLoopDetection("a.object_id", "p.treelevel")
+
+    '-------------------------------------------
+    '-- Save tree to temp table #tmpTreeList_userid
+    '-------------------------------------------
+    sSqlSelect = _
+        "Select Distinct b.original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, b.TreeLevel "
+    sSqlFrom = _
+        " FROM " & _
+        "    Tree_List b " & _
+        "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+        "    on b.project_id = d.project_id "
+       
+    If pvbDependency Then
+        sSqlFrom = sSqlFrom & _
+        " and b.object_id = d.object_id "         '-- Up Level -> Dependency List
+    Else
+        sSqlFrom = sSqlFrom & _
+        " and b.depn_objid = d.object_id "        '-- Down Level -> Component List
+        '*mod* v1.1
+        '--Include lowest level - columns/functions
+        '--" and b.depn_objid = d.object_id "        '-- Down Level -> Component List
+        '--Exclude lowest level - columns/functions
+        '--" and b.object_id = d.object_id "        '-- Down Level -> Component List
+    End If
+    
+    If pvbDependency Then
+        sSqlFrom = sSqlFrom & " WHERE d.object_type " & gkMstrObjectResultExclusion '--gkMstrObjectDependencyExclusion
+
+        '*mod* v2.1r11a Include shortcut used in Library from Tree
+        sSqlFrom = sSqlFrom & " UNION " & sSqlSelect & " + 1 TreeLevel "
+        sSqlFrom = sSqlFrom & _
+            " FROM " & _
+            "  Tree_List b " & _
+            "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+            "    on b.project_id = d.project_id " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L1 " & _
+                    "on L1.object_id = d.object_id and L1.project_id = d.project_id " & _
+                   "and L1.object_type = 18 " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L2 " & _
+                    "on L1.LINKITEM_ID = L2.LINKITEM_ID and L1.project_id = L2.project_id " & _
+                   "and L2.object_type = 55 " & _
+                   "and L2.object_id = b.object_id and L2.project_id = b.project_id "
+        sSqlFrom = sSqlFrom & " WHERE d.object_type " & gkMstrObjectResultExclusion
+
+        '*mod* v2.1r11a Include shortcut used in Library from original source
+        sSqlFrom = sSqlFrom & " UNION Select Distinct b.object_id original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, 1 TreeLevel "
+        sSqlFrom = sSqlFrom & _
+            " FROM " & _
+            pvsSourceTableName & " b " & _
+            "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+            "    on b.project_id = d.project_id " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L1 " & _
+                    "on L1.object_id = d.object_id and L1.project_id = d.project_id " & _
+                   "and L1.object_type = 18 " & _
+                "join " & gtypSession.sDBPrefixMD & "dssmdlnkitem L2 " & _
+                    "on L1.LINKITEM_ID = L2.LINKITEM_ID and L1.project_id = L2.project_id " & _
+                   "and L2.object_type = 55 " & _
+                   "and L2.object_id = b.object_id and L2.project_id = b.project_id "
+        sSqlFrom = sSqlFrom & " WHERE d.object_type " & gkMstrObjectResultExclusion
+        
+    Else    '-- Components
+        sSqlFrom = sSqlFrom & " WHERE d.object_type " & gsMstrObjectComponentResultExclusion
+        '*mod* v2.1r10e -- For Facts, get logical
+        '*mod* v2.1r10g include all tables that mapped to attribute(previously only main table is included)
+        If gnComponentDetail <> nComponentDetailMin And gbIncludeSourceTableComponentSearch() Then             '-- Skip if component detail is Min or not specified in option
+            sSqlFrom = sSqlFrom & " UNION " & sSqlSelect & " + 1 TreeLevel "
+            sSqlFrom = sSqlFrom & _
+                " FROM " & _
+                "  Tree_List b " & _
+                "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+                "    on b.project_id = d.project_id " & _
+                "    JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn c " & _
+                "        on b.project_id = c.project_id " & _
+                "        and (b.depn_objid = c.depn_objid or b.original_id = c.depn_objid) " & _
+                "        and c.object_id = d.object_id "
+            sSqlFrom = sSqlFrom & " WHERE c.depnobj_type in (12) and d.object_type = 15 "
+
+        End If
+
+        '-- Physical Table -- not needed as physical table is inlcuded in later pass
+'        sSqlFrom = sSqlFrom & " UNION " & sSqlSelect & " + 2 TreeLevel "
+'        sSqlFrom = sSqlFrom & _
+'            " FROM " & _
+'            "  Tree_List b " & _
+'            "    JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn c " & _
+'            "        on b.project_id = c.project_id " & _
+'            "        and b.depn_objid = c.object_id " & _
+'            "    JOIN " & gtypSession.sDBPrefixMD & "dssmdobjdepn c1 " & _
+'            "        on c.project_id = c1.project_id " & _
+'            "        and c.depn_objid = c1.object_id " & _
+'            "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+'            "    on c1.project_id = d.project_id " & _
+'            "    and c1.depn_objid = d.object_id "
+'        sSqlFrom = sSqlFrom & " WHERE c.object_type = 13 and c1.object_type = 15 and d.object_type = 53 and d.object_type " & gsMstrObjectComponentResultExclusion
+    End If
+
+    '-- note: moved below Union logic to TreeResult
+    '-------------------------------------------
+    '-- note: union with original source data in case of no leafs
+    '-------------------------------------------
+    
+    gsSQLtmpTreeHierarchy_SQL = gsSqlTmpTableCreationRecursion(pvsTargetTableName, sSqlSelect, sSqlFrom, sSqlTree, gkOracleRecursionSetting)
+End Function
+
+Public Function gsSQLtmpTreeUpdate(ByVal pvsTableName As String) As String
+'----------------------------------------------------------------------------------------------------------
+'Update tree as follows
+'*mod* v2.1r9k components should include DBTable
+'
+'-- Input Temp Table
+'o  pvsTableName  - Tree table
+'
+'-- Output Temp table
+'o  pvsTableName
+'-----------------------------------------------------------------------------------------------------------
+Dim sSqlSelect As String
+Dim sSqlFrom As String
+
+    gsProcName = "Tree Update"
+    '*mod* v2.1r9k components should include DBTable
+    sSqlSelect = sSqlFrom & _
+        " INSERT INTO " & pvsTableName & _
+        " Select Distinct c.original_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, ' ' Original_Data, c.TreeLevel+1 TreeLevel " & _
+        " FROM " & _
+        "         " & gtypSession.sDBPrefixMD & "dssmdobjdepn a " & _
+        "         join " & pvsTableName & " c " & _
+        "         ON a.object_id = c.object_id " & _
+        "         and a.project_id = c.project_id " & _
+        "         join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+        "         ON a.depn_objid = d.object_id " & _
+        "         and c.project_id = d.project_id " & _
+        "         where c.object_type = 15 and d.object_type = 53 "
+gsSQLtmpTreeUpdate = sSqlSelect
+End Function
+
+
+Public Function gsSQLtmpTreeResult(ByVal pvsSourceTableName As String, ByVal pvsTargetTableName As String, ByVal pvsIntermTableName As String, ByVal pvbDependency As Boolean) As String
+'----------------------------------------------------------------------------------------------------------
+'Consolidate Tree Hierarchy level and sequence #
+'Note that the result could still contain dup by design if orginal object is also a dependent/component
+'
+'-- Input Temp Table
+'o  pvsSourceTableName  - original source
+'o  pvsIntermTableName  - dependency tree
+'
+'-- Output Temp table
+'o  pvsTargetTableName
+'
+'-----------------------------------------------------------------------------------------------------------
+Dim sSqlSelect As String
+Dim sSqlFrom As String
+
+    gsProcName = "Tree Result"
+    '*mod* v2.1p sSqlSelect = "select a.original_id, a.object_id, a.object_type, a.subtype, a.extended_type, a.project_id, a.mod_time, a.Original_Data "
+    sSqlSelect = "select a.object_id, a.object_type, a.subtype, a.extended_type, a.project_id, a.mod_time, a.Original_Data "
+    If pvbDependency Then
+        sSqlSelect = sSqlSelect & ", MAX(a.TreeLevel) TreeLevel "
+    Else
+        sSqlSelect = sSqlSelect & ", MIN(a.TreeLevel) TreeLevel "
+    End If
+    sSqlFrom = sSqlFrom & _
+        " from " & pvsIntermTableName & " a " & _
+        " group by a.object_id, a.object_type, a.subtype, a.extended_type, a.project_id, a.mod_time, a.Original_Data "
+        
+'        " group by a.original_id, a.object_id, a.object_type, a.subtype, a.extended_type, a.project_id, a.mod_time, a.Original_Data "
+'*mod* v2.1p
+'        "Select Distinct b.object_id, d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, 'Y' Original_Data, 0 TreeLevel  " & _
+
+    '*mod* v2.1e 3/6/16 cl: TreeLevel = 0 --> original object has children
+    sSqlFrom = sSqlFrom & _
+        " UNION " & _
+        "Select Distinct d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, 'Y' Original_Data, 0 TreeLevel  " & _
+        "FROM " & _
+        "    " & pvsSourceTableName & " b " & _
+        "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+        "    ON b.object_id = d.object_id " & _
+        "    and b.project_id = d.project_id " & _
+        "    join " & pvsIntermTableName & " e " & _
+        "    ON e.original_id = b.object_id "
+
+    '*mod* v2.1e 3/6/16 cl: TreeLevel = -1 --> original object is a widow
+    sSqlFrom = sSqlFrom & _
+        " UNION " & _
+        "Select Distinct d.object_id, d.object_type, d.subtype, d.extended_type, d.project_id, d.mod_time, 'Y' Original_Data, -1 TreeLevel  " & _
+        "FROM " & _
+        "    " & pvsSourceTableName & " b " & _
+        "    join " & gtypSession.sDBPrefixMD & "dssmdobjinfo d " & _
+        "    ON b.object_id = d.object_id " & _
+        "    and b.project_id = d.project_id " & _
+        "    left join " & pvsIntermTableName & " e " & _
+        "    ON e.original_id = b.object_id " & _
+        "WHERE e.original_id IS NULL "
+        
+    gsSQLtmpTreeResult = gsSqlTmpTableCreation(pvsTargetTableName, sSqlSelect, sSqlFrom)
+    
+End Function
